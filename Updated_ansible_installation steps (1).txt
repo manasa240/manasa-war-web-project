@@ -1,0 +1,211 @@
+1. Set Up Two Servers in your AWS account as
+Server 1: ansible-master (Control Node)
+Server 2: ansible-slave (Remote Node)
+
+2. Install Ansible on Server 1 (Ansible Master)
+Step 1: Update System Packages
+sudo dnf update -y
+
+Step 2: Install Ansible
+sudo dnf install ansible -y
+
+Step 3: Verify Installation
+ansible --version
+
+3. Configure SSH Access to Remote Server
+Step 1: Copy PEM Key to Server 1 (Here replace Linux.pem name with your pem key name)
+Transfer the Linux.pem file to ansible-master (your control node) and place it under ~/.ssh/.
+
+vi ~/.ssh/Linux.pem
+Paste the PEM key content inside and save.
+
+Step 2: Secure the PEM Key
+chmod 400 ~/.ssh/Linux.pem
+
+Step 3: Test SSH Connection
+ssh -i ~/.ssh/Linux.pem ec2-user@172.31.5.121
+If successful, this should log you into the remote server without asking for a password.
+
+4. Create the Ansible Inventory File
+Create a file inventory.ini on ansible-master.
+
+vi inventory.ini
+Add the following content:
+[remote]
+172.31.5.121 ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/Linux.pem
+
+5. Write the Ansible Playbook
+Create a file install_softwares.yml:
+
+vi install_softwares.yml
+Paste the following content:
+
+---
+- name: Install Java, Maven, Docker, and Minikube on Amazon Linux 2023
+  hosts: remote
+  become: yes
+  tasks:
+
+    - name: Update System Packages
+      yum:
+        name: "*"
+        state: latest
+
+    - name: Install Java (Amazon Corretto JDK 11)
+      yum:
+        name: java-11-amazon-corretto
+        state: present
+
+    - name: Verify Java installation
+      command: java -version
+      register: java_output
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug Java Version
+      debug:
+        msg: "Java Version: {{ java_output.stdout_lines }}"
+      when: java_output.stdout_lines is defined
+
+    - name: Ensure Maven is installed
+      yum:
+        name: maven
+        state: present
+
+    - name: Install Docker
+      yum:
+        name: docker
+        state: present
+
+    - name: Enable and start Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ec2-user to Docker group
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    - name: Install Minikube prerequisites
+      yum:
+        name:
+          - conntrack
+          - iptables
+          - socat
+        state: present
+
+    - name: Download Minikube binary
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+
+    - name: Set environment variables
+      ansible.builtin.blockinfile:
+        path: /etc/profile.d/java_maven_docker_minikube.sh
+        create: yes
+        block: |
+          export JAVA_HOME=/usr/lib/jvm/java-11-amazon-corretto.x86_64
+          export PATH=$JAVA_HOME/bin:$PATH
+          export MAVEN_HOME=/usr/share/maven
+          export PATH=$MAVEN_HOME/bin:$PATH
+        mode: '0644'
+
+    - name: Apply environment variables
+      shell: source /etc/profile.d/java_maven_docker_minikube.sh
+      args:
+        executable: /bin/bash
+
+    - name: Verify Maven installation
+      command: mvn -version
+      register: maven_output
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug Maven Version
+      debug:
+        msg: "Maven Version: {{ maven_output.stdout_lines }}"
+      when: maven_output.stdout_lines is defined
+
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_output
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug Docker Version
+      debug:
+        msg: "Docker Version: {{ docker_output.stdout_lines }}"
+      when: docker_output.stdout_lines is defined
+
+    - name: Verify Minikube installation
+      command: minikube version
+      register: minikube_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug Minikube Version
+      debug:
+        msg: "Minikube Version: {{ minikube_check.stdout_lines }}"
+      when: minikube_check.stdout_lines is defined
+
+    - name: Start Minikube with Docker driver
+      shell: minikube start --driver=docker
+      args:
+        executable: /bin/bash
+      register: minikube_start_output
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug Minikube Start Output
+      debug:
+        msg: "{{ minikube_start_output.stdout_lines }}"
+      when: minikube_start_output.stdout_lines is defined
+
+    - name: Check Minikube Status
+      command: minikube status
+      register: minikube_status_output
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug Minikube Status
+      debug:
+        msg: "Minikube Status: {{ minikube_status_output.stdout_lines }}"
+      when: minikube_status_output.stdout_lines is defined
+
+    - name: Install kubectl for managing Minikube
+      get_url:
+        url: https://storage.googleapis.com/kubernetes-release/release/v1.28.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    - name: Verify kubectl installation
+      command: kubectl version --client
+      register: kubectl_output
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Debug kubectl Version
+      debug:
+        msg: "Kubectl Version: {{ kubectl_output.stdout_lines }}"
+      when: kubectl_output.stdout_lines is defined
+
+	  
+6. Execute the Playbook
+Run the playbook from ansible-master:
+ansible-playbook -i inventory.ini install_softwares.yml
+
+7. Verify the Installation
+Log into the ansible-slave and check:
+echo $JAVA_HOME
+java -version
+mvn -version
+docker --version
+minikube version
+minikube status
+kubectl version --client
+
+
